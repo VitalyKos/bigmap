@@ -1,4 +1,4 @@
-from PyQt5 import QtGui
+from PyQt5 import QtCore, QtGui
 from PyQt5.QtCore import QSize, Qt
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import QApplication, QGridLayout, QLabel, QLineEdit, QMainWindow, QPushButton, QWidget
@@ -13,6 +13,8 @@ class myMap:
         self.lat = 37.619585
         self.lon = 55.865172
         self.l = "map"
+        self.pt_lat = self.lat
+        self.pt_lon = self.lon
         self.show_pt = False
 
 
@@ -81,7 +83,7 @@ class MainWindow(QMainWindow):
         self.index_button = QPushButton("Отключить отображение индекса", self)
         self.grid_layout.addWidget(self.index_button, 1, 10, 1, 3)
         self.index_button.clicked.connect(self.set_index)
-
+        self.new_search()
         self.installEventFilter(self)
 
     def set_index(self):
@@ -125,12 +127,12 @@ class MainWindow(QMainWindow):
         geo = geocode(toponym_to_find)["metaDataProperty"]["GeocoderMetaData"]
         self.adress.setText(geo["text"] + f', индекс {geo["Address"]["postal_code"]}' * self.show_index)
         # Получаем координаты центра карты
-        my_map.lon, my_map.lat = get_coords(toponym_to_find)
+        my_map.pt_lon, my_map.pt_lat = my_map.lon, my_map.lat = get_coords(toponym_to_find)
         params = {
             "ll": ",".join([str(my_map.lon), str(my_map.lat)]),
             "z": str(my_map.z),
             "l": f"{my_map.l}",
-            'pt': f"{my_map.lon},{my_map.lat}"
+            'pt': f"{my_map.pt_lon},{my_map.pt_lat}"
         }
         my_map.show_pt = True
 
@@ -153,7 +155,7 @@ class MainWindow(QMainWindow):
             "ll": ",".join([str(my_map.lon), str(my_map.lat)]),
             "z": str(my_map.z),
             "l": f"{my_map.l}",
-            'pt': f"{my_map.lon},{my_map.lat}"
+            'pt': f"{my_map.pt_lon},{my_map.pt_lat}"
         }
         if not my_map.show_pt:
             del params["pt"]
@@ -173,6 +175,48 @@ class MainWindow(QMainWindow):
         if destination == "up":
             my_map.lat += 0.07
         self.change_z()
+
+    def mousePressEvent(self, event):
+        super().mousePressEvent(event)
+        pos = event.pos()
+        x = pos.x() - self.image.x()
+        y = pos.y() - self.image.y() - 28
+        if x < 0 or y < 0 or x > self.image.pixmap().width() or y > self.image.pixmap().height():
+            return
+        dx = self.image.pixmap().rect().center().x() - x
+        dy = self.image.pixmap().rect().center().y() - y
+        l_change = 580 / 4 ** (my_map.z - 3)  # числа опять примерно рандомные
+
+
+        new_lon = my_map.lon - dx * l_change
+        new_lat = my_map.lat + dy * l_change
+        if event.button() == Qt.LeftButton:
+            my_map.pt_lon = new_lon
+            my_map.pt_lat = new_lat
+            self.change_z()
+
+            geo = geocode(f"{my_map.pt_lon},{my_map.pt_lat}")["metaDataProperty"]["GeocoderMetaData"]
+            self.adress.setText(geo["text"] + f', индекс {geo["Address"].get("postal_code", "??????")}' * self.show_index)
+        elif event.button() == Qt.RightButton:
+            search_api_server = "https://search-maps.yandex.ru/v1/"
+            api_key = "dda3ddba-c9ea-4ead-9010-f43fbc15c6e3"
+
+            search_params = {
+                "apikey": api_key,
+                "lang": "ru_RU",
+                "text": "школа",
+                "type": "biz",
+                "ll": f"{my_map.pt_lon},{my_map.pt_lat}",
+                "results": 1,
+            }
+            response = requests.get(search_api_server, params=search_params)
+            data = response.json()["features"][0]
+
+            my_map.pt_lon, my_map.pt_lat = data["geometry"]["coordinates"]
+            self.change_z()
+
+            geo = geocode(f"{my_map.pt_lon},{my_map.pt_lat}")["metaDataProperty"]["GeocoderMetaData"]
+            self.adress.setText(geo["text"] + f', индекс {geo["Address"].get("postal_code", "??????")}' * self.show_index)
 
 
 if __name__ == "__main__":
